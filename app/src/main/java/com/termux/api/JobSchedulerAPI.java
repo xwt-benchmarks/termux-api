@@ -5,17 +5,14 @@ import android.app.job.JobScheduler;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
-import android.os.Build;
 import android.os.PersistableBundle;
-import android.support.annotation.RequiresApi;
-import android.text.TextUtils;
 import android.util.Log;
 
 import com.termux.api.util.ResultReturner;
 
+import org.json.JSONObject;
+
 import java.io.File;
-import java.util.ArrayList;
-import java.util.List;
 import java.util.Locale;
 
 public class JobSchedulerAPI {
@@ -23,54 +20,17 @@ public class JobSchedulerAPI {
     private static final String LOG_TAG = "JobSchedulerAPI";
 
 
-    private static String formatJobInfo(JobInfo jobInfo) {
-        final String path = jobInfo.getExtras().getString(SchedulerJobService.SCRIPT_FILE_PATH);
-        List<String> description = new ArrayList<String>();
-        if (jobInfo.isPeriodic()) {
-            description.add(String.format(Locale.ENGLISH, "(periodic: %dms)", jobInfo.getIntervalMillis()));
-        }
-        if (jobInfo.isRequireCharging()) {
-            description.add("(while charging)");
-        }
-        if (jobInfo.isRequireDeviceIdle()) {
-            description.add("(while idle)");
-        }
-        if (jobInfo.isPersisted()) {
-            description.add("(persisted)");
-        }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            if (jobInfo.isRequireBatteryNotLow()) {
-                description.add("(battery not low)");
-            }
-            if (jobInfo.isRequireStorageNotLow()) {
-                description.add("(storage not low)");
-            }
-        }
-        if (Build.VERSION.SDK_INT >= 28) {
-            description.add(String.format(Locale.ENGLISH, "(network: %s)", jobInfo.getRequiredNetwork().toString()));
-        }
+    static void onReceive(final Context context, final JSONObject opts) {
 
-        return String.format(Locale.ENGLISH, "Job %d: %s\t%s", jobInfo.getId(), path,
-                TextUtils.join(" ", description));
-    }
+        final String scriptPath = opts.optString("script");
 
-    static void onReceive(TermuxApiReceiver apiReceiver, Context context, Intent intent) {
-
-        final String scriptPath = intent.getStringExtra("script");
-
-        final int jobId = intent.getIntExtra("job_id", 0);
-
-        final boolean pending = intent.getBooleanExtra("pending", false);
-
-        final boolean cancel = intent.getBooleanExtra("cancel", false);
-        final boolean cancelAll = intent.getBooleanExtra("cancel_all", false);
-
-        final int periodicMillis = intent.getIntExtra("period_ms", 0);
-        final String networkType = intent.getStringExtra("network");
-        final boolean batteryNotLow = intent.getBooleanExtra("battery_not_low", true);
-        final boolean charging = intent.getBooleanExtra("charging", false);
-        final boolean idle = intent.getBooleanExtra("idle", false);
-        final boolean storageNotLow = intent.getBooleanExtra("storage_not_low", false);
+        final int periodicMillis = opts.optInt("period_ms", 0);
+        final int jobId = opts.optInt("job_id", 0);
+        final String networkType = opts.optString("network");
+        final boolean batteryNotLow = opts.optBoolean("battery_not_low", true);
+        final boolean charging = opts.optBoolean("charging", false);
+        final boolean idle = opts.optBoolean("idle", false);
+        final boolean storageNotLow = opts.optBoolean("storage_not_low", false);
 
         int networkTypeCode = JobInfo.NETWORK_TYPE_NONE;
         if (networkType != null) {
@@ -93,31 +53,8 @@ public class JobSchedulerAPI {
                     break;
             }
         }
-
-
-        JobScheduler jobScheduler = (JobScheduler) context.getSystemService(Context.JOB_SCHEDULER_SERVICE);
-
-        if (pending) {
-            displayPendingJobs(apiReceiver, intent, jobScheduler);
-            return;
-        }
-        if (cancelAll) {
-            displayPendingJobs(apiReceiver, intent, jobScheduler);
-            ResultReturner.returnData(apiReceiver, intent, out -> out.println("Cancelling all jobs"));
-            jobScheduler.cancelAll();
-            return;
-        } else if (cancel) {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                cancelJob(apiReceiver, intent, jobScheduler, jobId);
-            } else {
-                ResultReturner.returnData(apiReceiver, intent, out -> out.println("Need at least Android N to cancel individual jobs"));
-            }
-            return;
-        }
-
-        // Schedule new job
         if (scriptPath == null) {
-            ResultReturner.returnData(apiReceiver, intent, out -> out.println("No script path given"));
+            ResultReturner.returnData(context, out -> out.println("No script path given"));
             return;
         }
         final File file = new File(scriptPath);
@@ -133,12 +70,20 @@ public class JobSchedulerAPI {
         }
 
         if (!fileCheckMsg.isEmpty()) {
-            ResultReturner.returnData(apiReceiver, intent, out -> out.println(String.format(fileCheckMsg, scriptPath)));
+            ResultReturner.returnData(context, out -> out.println(String.format(fileCheckMsg, scriptPath)));
             return;
         }
 
         PersistableBundle extras = new PersistableBundle();
         extras.putString(SchedulerJobService.SCRIPT_FILE_PATH, file.getAbsolutePath());
+
+
+        JobScheduler jobScheduler = (JobScheduler) context.getSystemService(Context.JOB_SCHEDULER_SERVICE);
+        // Display pending jobs
+        for (JobInfo job : jobScheduler.getAllPendingJobs()) {
+            final JobInfo j = job;
+            ResultReturner.returnData(context, out -> out.println(String.format(Locale.ENGLISH, "Pending job %d %s", j.getId(), j.toString())));
+        }
 
         ComponentName serviceComponent = new ComponentName(context, SchedulerJobService.class);
         JobInfo.Builder builder = new JobInfo.Builder(jobId, serviceComponent)
@@ -147,7 +92,7 @@ public class JobSchedulerAPI {
                 .setRequiresCharging(charging)
                 .setRequiresDeviceIdle(idle);
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
             builder = builder.setRequiresBatteryNotLow(batteryNotLow);
             builder = builder.setRequiresStorageNotLow(storageNotLow);
         }
@@ -160,37 +105,10 @@ public class JobSchedulerAPI {
 
         final int scheduleResponse = jobScheduler.schedule(job);
 
-        final String message = String.format(Locale.ENGLISH, "Scheduling %s - response %d", formatJobInfo(job), scheduleResponse);
-        Log.i(LOG_TAG, message);
-        ResultReturner.returnData(apiReceiver, intent, out -> out.println(message));
-
-
-        displayPendingJobs(apiReceiver, intent, jobScheduler);
-
-    }
-
-    private static void displayPendingJobs(TermuxApiReceiver apiReceiver, Intent intent, JobScheduler jobScheduler) {
-        // Display pending jobs
-        final List<JobInfo> jobs = jobScheduler.getAllPendingJobs();
-        if (jobs.isEmpty()) {
-            ResultReturner.returnData(apiReceiver, intent, out -> out.println("No pending jobs"));
-            return;
-        }
-        for (JobInfo job : jobs) {
-            ResultReturner.returnData(apiReceiver, intent, out -> out.println(String.format(Locale.ENGLISH, "Pending %s", formatJobInfo(job))));
-        }
-    }
-
-    @RequiresApi(api = Build.VERSION_CODES.N)
-    private static void cancelJob(TermuxApiReceiver apiReceiver, Intent intent, JobScheduler jobScheduler, int jobId) {
-        final JobInfo jobInfo = jobScheduler.getPendingJob(jobId);
-        if (jobInfo == null) {
-            ResultReturner.returnData(apiReceiver, intent, out -> out.println(String.format(Locale.ENGLISH, "No job %d found", jobId)));
-            return;
-        }
-        ResultReturner.returnData(apiReceiver, intent, out -> out.println(String.format(Locale.ENGLISH, "Cancelling %s", formatJobInfo(jobInfo))));
-        jobScheduler.cancel(jobId);
-
+        Log.i(LOG_TAG, String.format("Scheduled job %d to call %s every %d ms - response %d",
+                jobId, scriptPath, periodicMillis, scheduleResponse));
+        ResultReturner.returnData(context, out -> out.println(String.format(Locale.ENGLISH,"Scheduled job %d to call %s every %d ms - response %d",
+                jobId, scriptPath, periodicMillis, scheduleResponse)));
     }
 
 }
