@@ -18,58 +18,24 @@ public class ClipboardAPI {
     static void onReceive(final Context context, final JSONObject opts) {
         final ClipboardManager clipboard = (ClipboardManager) context.getSystemService(Context.CLIPBOARD_SERVICE);
         final ClipData clipData = clipboard.getPrimaryClip();
+        final String newClipText = opts.optString("text");
+        boolean set = opts.optBoolean("set", false);
 
-        boolean version2 = "2".equals(opts.optString("api_version"));
-        if (version2) {
-            boolean set = opts.optBoolean("set", false);
-            if (set) {
-                ResultReturner.returnData(context, new ResultReturner.WithStringInput() {
-                    @Override
-                    protected boolean trimInput() {
-                        return false;
-                    }
-
-                    @Override
-                    public void writeResult(PrintWriter out) {
-                        clipboard.setPrimaryClip(ClipData.newPlainText("", inputString));
-                    }
-                });
-            } else {
-                ResultReturner.returnData(context, out -> {
-                    if (clipData == null) {
-                        out.print("");
-                    } else {
-                        int itemCount = clipData.getItemCount();
-                        for (int i = 0; i < itemCount; i++) {
-                            Item item = clipData.getItemAt(i);
-                            CharSequence text = item.coerceToText(context);
-                            if (!TextUtils.isEmpty(text)) {
-                                out.print(text);
-                            }
-                        }
-                    }
-                });
-            }
+        if (set) {
+            // Set clip.
+            clipboard.setPrimaryClip(ClipData.newPlainText("", newClipText));
+            ResultReturner.returnData(context, out -> out.print(""));
         } else {
-            final String newClipText = opts.optString("text");
-            if (newClipText != null) {
-                // Set clip.
-                clipboard.setPrimaryClip(ClipData.newPlainText("", newClipText));
-            }
-
             ResultReturner.returnData(context, out -> {
-                if (newClipText == null) {
-                    // Get clip.
-                    if (clipData == null) {
-                        out.print("");
-                    } else {
-                        int itemCount = clipData.getItemCount();
-                        for (int i = 0; i < itemCount; i++) {
-                            Item item = clipData.getItemAt(i);
-                            CharSequence text = item.coerceToText(context);
-                            if (!TextUtils.isEmpty(text)) {
-                                out.print(text);
-                            }
+                if (clipData == null) {
+                    out.print("");
+                } else {
+                    int itemCount = clipData.getItemCount();
+                    for (int i = 0; i < itemCount; i++) {
+                        Item item = clipData.getItemAt(i);
+                        CharSequence text = item.coerceToText(context);
+                        if (!TextUtils.isEmpty(text)) {
+                            out.println(text);
                         }
                     }
                 }
