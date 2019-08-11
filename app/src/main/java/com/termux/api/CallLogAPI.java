@@ -20,9 +20,6 @@ import java.util.Locale;
 public class CallLogAPI {
 
     static void onReceive(final Context context, final JSONObject opts) {
-        final int offset = opts.optInt("offset");
-        final int limit = opts.optInt("limit", 50);
-
         ResultReturner.returnData(context, new ResultReturner.ResultJsonWriter() {
             public void writeJson(JsonWriter out) throws Exception {
                 out.beginObject();
